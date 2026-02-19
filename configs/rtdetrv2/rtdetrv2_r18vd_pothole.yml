@@ -3,11 +3,9 @@
 # Kullanım: python scripts/02_train.py --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml
 
 __include__:
-  - ../dataset/pothole_detection.yml
   - ../runtime.yml
-  - ./include/dataloader.yml
-  - ./include/optimizer.yml
-  - ./include/rtdetrv2_r18vd.yml
+  - ./rtdetrv2_r18vd_120e_coco.yml
+  - ../dataset/pothole_detection.yml
 
 # Tek sınıf + background convention.
 num_classes: 2
@@ -35,11 +33,12 @@ optimizer:
   weight_decay: 0.0001
   betas: [0.9, 0.999]
 
+# Bazı RT-DETR sürümlerinde Cosine override merge sırasında hata üretebildiği için
+# güvenli MultiStepLR kullanılır.
 lr_scheduler:
-  type: CosineAnnealingLR
-  warmup_epochs: 5
-  cos_lr: True
-  min_lr_ratio: 0.005
+  type: MultiStepLR
+  milestones: [160]
+  gamma: 0.1
 
 use_amp: True
 clip_max_norm: 0.1
@@ -51,13 +50,15 @@ print_freq: 20
 checkpoint_freq: 10
 output_dir: /content/outputs/pothole_rtdetrv2
 
-criterion:
+criterion: RTDETRCriterionv2
+RTDETRCriterionv2:
   weight_dict:
-    loss_vfl: 1.0
-    loss_bbox: 5.0
-    loss_giou: 2.0
-  focal_loss_alpha: 0.75
-  focal_loss_gamma: 2.0
+    loss_vfl: 1
+    loss_bbox: 5
+    loss_giou: 2
+  losses: ['vfl', 'boxes']
+  alpha: 0.75
+  gamma: 2.0
 
 # Son 15 epoch'ta augmentation azaltma (multi-scale kapatma) politikası.
 # Not: Bu bölüm proje scriptleri tarafından okunup uygulanır.

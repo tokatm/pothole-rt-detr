@@ -39,11 +39,14 @@ python scripts/01_convert_yolo_to_coco.py \
 python scripts/02_train.py \
   --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml \
   --rtdetr-root /content/RT-DETR/rtdetrv2_pytorch \
-  -t /content/weights/rtdetrv2_r18vd_120e_coco_rerun_48.1.pth
+  --use-amp
 ```
 
 Eğitimde:
-- cosine LR + warmup
+- script, `configs/` dosyalarını otomatik olarak RT-DETR config klasörüne senkronize eder
+- `-t` verilmezse varsayılan RT-DETRv2-S pretrained dosyası otomatik indirilir
+- AMP için `--use-amp` kullanılabilir
+- scheduler: MultiStepLR (RT-DETR sürümleriyle güvenli uyum)
 - recall ağırlıklı best checkpoint skoru: `0.6 * recall + 0.4 * mAP50`
 - early stopping: `patience=60`
 - epoch bazlı log: `training_log.json`

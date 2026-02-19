@@ -1,58 +1,45 @@
-# Amaç: RT-DETRv2 için pothole dataset tanımı ve augmentation pipeline'ı.
+# Amaç: RT-DETRv2 için pothole dataset tanımı (RT-DETR sürümleriyle uyumlu güvenli transform seti).
 # Bağımlılıklar: RT-DETRv2 YAMLConfig loader
-# Kullanım: 02_train.py içinden --config ile yüklenir.
+# Kullanım: 02_train.py config senkronizasyonu ile otomatik olarak RT-DETR içine kopyalanır.
 
-__include__: []
-
-# RT-DETRv2 kodunda bazı varyantlarda num_classes doğrudan sınıf sayısı, bazılarında background dahil okunur.
-# Bu nedenle burada prompt gereği 2 kullanıldı: background + pothole.
 num_classes: 2
 remap_mscoco_category: False
 
 train_dataloader:
+  type: DataLoader
   dataset:
     type: CocoDetection
     img_folder: /content/dataset/combined_dataset/images/train
     ann_file: /content/dataset/combined_dataset/annotations/train_annotations.json
+    return_masks: False
     transforms:
       type: Compose
       ops:
-        - {type: RandomPhotometricDistort}
+        - {type: RandomPhotometricDistort, p: 0.5}
         - {type: RandomZoomOut, fill: 0}
         - {type: RandomIoUCrop, p: 0.8}
-        - {
-            type: RandomHorizontalFlip,
-            p: 0.5
-          }
-        # Küçük pothole kaçırmamak için geniş multi-scale aralığı kullanılır.
-        - {
-            type: RandomResize,
-            sizes: [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800],
-            max_size: 1333
-          }
-        # Asfalt/ışık varyasyonu için color jitter.
-        - {
-            type: ColorJitter,
-            brightness: 0.3,
-            contrast: 0.3,
-            saturation: 0.3,
-            hue: 0.1
-          }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [640, 640]}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: ConvertPILImage, dtype: float32, scale: True}
         - {type: ConvertBoxes, fmt: cxcywh, normalize: True}
   shuffle: True
   drop_last: True
   num_workers: 4
-  batch_size: 32
+  total_batch_size: 32
   collate_fn:
     type: BatchImageCollateFunction
-    scales: [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
+    scales: ~
+    stop_epoch: 71
 
 val_dataloader:
+  type: DataLoader
   dataset:
     type: CocoDetection
     img_folder: /content/dataset/combined_dataset/images/val
     ann_file: /content/dataset/combined_dataset/annotations/val_annotations.json
+    return_masks: False
     transforms:
       type: Compose
       ops:
@@ -62,7 +49,7 @@ val_dataloader:
   shuffle: False
   drop_last: False
   num_workers: 2
-  batch_size: 32
+  total_batch_size: 32
   collate_fn:
     type: BatchImageCollateFunction
     scales: ~
