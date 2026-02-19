@@ -95,10 +95,10 @@ optimizer:
 # CosineAnnealingLR'yi native olarak tanımıyor. Config merge sırasında hata
 # üretebilir. Bu yüzden MultiStepLR kullanılır, ama milestones agresifleştirilir.
 # Önceki ayar [160] idi — model epoch 7'de platoya girdi, 160'a kadar LR sabit kaldı.
-# Yeni milestones: [40, 70] — iki kademeli LR düşüşü ile daha iyi convergence.
+# Yeni milestones: [20, 35, 50] — erken plateau'yu kırmak için daha agresif düşüş.
 lr_scheduler:
   type: MultiStepLR
-  milestones: [40, 70]
+  milestones: [20, 35, 50]
   gamma: 0.1
 
 # =============================================================================
@@ -136,7 +136,7 @@ seed: 42
 # Toplam epoch sayısı.
 # DİKKAT: RT-DETR config'inde typo var — "epoches" ("epochs" değil!).
 # Önceki değer 200 idi ama analysis raporu overfitting'in epoch 7'de başladığını
-# gösterdi. 80 epoch yeterli: [40, 70] milestones + warmup ile tam convergence.
+# gösterdi. 80 epoch yeterli: [20, 35, 50] milestones + warmup ile tam convergence.
 epoches: 80
 # Log sıklığı (her N iterasyonda bir).
 print_freq: 20
