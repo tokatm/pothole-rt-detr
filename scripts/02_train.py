@@ -20,6 +20,7 @@ import logging
 import random
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -30,6 +31,10 @@ import yaml
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 LOGGER = logging.getLogger(__name__)
+DEFAULT_PRETRAINED_URL = (
+    "https://github.com/lyuwenyu/storage/releases/download/v0.2/"
+    "rtdetrv2_r18vd_120e_coco_rerun_48.1.pth"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,7 +43,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--rtdetr-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("/content/outputs/pothole_rtdetrv2"))
-    parser.add_argument("-t", "--pretrained", type=Path, default=None)
+    parser.add_argument(
+        "-t",
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Pretrained weight path veya URL. Verilmezse varsayılan URL'den indirilir.",
+    )
     parser.add_argument("--early-stopping-patience", type=int, default=60)
     return parser.parse_args()
 
@@ -59,15 +70,39 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def maybe_validate_checkpoint(path: Path | None) -> Path | None:
-    """Checkpoint varlığını doğrular ve hata durumunda kullanıcıdan karar alır."""
-    if path is None:
-        LOGGER.warning("-t verilmedi. Eğitim scratch'ten başlayacak.")
-        return None
-    if path.exists():
-        return path
+def _download_weights(url: str, output_path: Path) -> Path:
+    """Pretrained weight dosyasını URL'den indirir."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Pretrained weight indiriliyor: %s", url)
+    urllib.request.urlretrieve(url, output_path)
+    LOGGER.info("Weight indirildi: %s", output_path)
+    return output_path
 
-    LOGGER.error("Pretrained weight yüklenemedi: %s", path)
+
+def maybe_validate_checkpoint(path_or_url: str | None, output_dir: Path) -> Path | None:
+    """Checkpoint'i dosya yolu/URL olarak çözümler, gerekirse indirir."""
+    candidate = path_or_url or DEFAULT_PRETRAINED_URL
+
+    if candidate.startswith(("http://", "https://")):
+        filename = Path(candidate).name or "rtdetrv2_r18vd_120e_coco_rerun_48.1.pth"
+        local_path = output_dir / "weights" / filename
+        if local_path.exists():
+            LOGGER.info("İndirilen weight zaten mevcut: %s", local_path)
+            return local_path
+        try:
+            return _download_weights(candidate, local_path)
+        except Exception as exc:
+            LOGGER.error("Weight indirilemedi: %s", exc)
+            answer = input("Scratch eğitim ile devam edilsin mi? [e/h]: ").strip().lower()
+            if answer in {"e", "evet", "y", "yes"}:
+                return None
+            raise RuntimeError("Kullanıcı scratch eğitimi reddetti.") from exc
+
+    local_path = Path(candidate)
+    if local_path.exists():
+        return local_path
+
+    LOGGER.error("Pretrained weight yüklenemedi: %s", local_path)
     answer = input("Scratch eğitim ile devam edilsin mi? [e/h]: ").strip().lower()
     if answer in {"e", "evet", "y", "yes"}:
         return None
@@ -143,7 +178,7 @@ def main() -> None:
 
     torch.backends.cudnn.benchmark = True
 
-    pretrained_path = maybe_validate_checkpoint(args.pretrained)
+    pretrained_path = maybe_validate_checkpoint(args.pretrained, args.output_dir)
 
     return_code = run_rtdetr_train(
         rtdetr_root=args.rtdetr_root,
