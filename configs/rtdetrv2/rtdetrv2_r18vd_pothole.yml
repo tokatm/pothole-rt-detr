@@ -14,7 +14,7 @@
 
 __include__:
   - ../runtime.yml
-  - ./rtdetrv2_r18vd_120e_coco.yml
+  - ./rtdetrv2_r34vd_120e_coco.yml
   - ../dataset/pothole_detection.yml
 
 # --- Sınıf Sayısı ---
