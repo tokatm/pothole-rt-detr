@@ -7,7 +7,8 @@ Dependencies:
 Usage:
     python scripts/01_convert_yolo_to_coco.py \
         --dataset-root /content/dataset/combined_dataset \
-        --output-dir /content/dataset/combined_dataset/annotations
+        --output-dir /content/dataset/combined_dataset/annotations \
+        --min-side-px 32
 """
 
 from __future__ import annotations
@@ -53,6 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="YOLO to COCO converter")
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--min-side-px",
+        type=float,
+        default=32.0,
+        help="Bu değere eşit veya daha küçük kısa kenara sahip bbox'ları ele.",
+    )
     return parser.parse_args()
 
 
@@ -67,7 +74,7 @@ def yolo_to_coco_bbox(
     return max(0.0, x_min), max(0.0, y_min), max(0.0, w_px), max(0.0, h_px)
 
 
-def convert_split(dataset_root: Path, split: str) -> Dict[str, List[Dict]]:
+def convert_split(dataset_root: Path, split: str, min_side_px: float) -> Dict[str, List[Dict]]:
     """Belirli split'i YOLO formatindan COCO dict'e donusturur."""
     image_dir = dataset_root / "images" / split
     label_dir = dataset_root / "labels" / split
@@ -80,6 +87,7 @@ def convert_split(dataset_root: Path, split: str) -> Dict[str, List[Dict]]:
 
     image_id = 1
     annotation_id = 1
+    filtered_small = 0
 
     image_files = sorted(
         [p for p in image_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}]
@@ -120,6 +128,10 @@ def convert_split(dataset_root: Path, split: str) -> Dict[str, List[Dict]]:
                     LOGGER.warning("Beklenmeyen class id (%s), atlandi: %s", int(cls), line)
                     continue
                 coco_bbox = yolo_to_coco_bbox(x_c, y_c, w, h, width, height)
+                # Hedef: bildirime değmeyecek kadar küçük çukurları eğitimden çıkar.
+                if min(coco_bbox[2], coco_bbox[3]) <= min_side_px:
+                    filtered_small += 1
+                    continue
                 area = coco_bbox[2] * coco_bbox[3]
                 annotation_records.append(
                     CocoAnnotation(
@@ -142,6 +154,12 @@ def convert_split(dataset_root: Path, split: str) -> Dict[str, List[Dict]]:
         "annotations": annotation_records,
         "categories": [{"id": 1, "name": "pothole"}],
     }
+    LOGGER.info(
+        "%s split | min_side<=%.1fpx filtrelendi: %d",
+        split,
+        min_side_px,
+        filtered_small,
+    )
     return coco
 
 
@@ -151,7 +169,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for split in ("train", "val"):
-        coco = convert_split(args.dataset_root, split)
+        coco = convert_split(args.dataset_root, split, args.min_side_px)
         out_path = args.output_dir / f"{split}_annotations.json"
         out_path.write_text(json.dumps(coco, ensure_ascii=False, indent=2), encoding="utf-8")
         LOGGER.info(
