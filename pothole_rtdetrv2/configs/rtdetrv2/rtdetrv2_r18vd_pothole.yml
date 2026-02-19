@@ -1,0 +1,76 @@
+# Amaç: RT-DETRv2-S (R18vd) pothole fine-tuning konfigürasyonu.
+# Bağımlılıklar: lyuwenyu/RT-DETR rtdetrv2_pytorch config sistemi
+# Kullanım: python scripts/02_train.py --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml
+
+__include__:
+  - ../dataset/pothole_detection.yml
+  - ../runtime.yml
+  - ./include/dataloader.yml
+  - ./include/optimizer.yml
+  - ./include/rtdetrv2_r18vd.yml
+
+# Tek sınıf + background convention.
+num_classes: 2
+
+PResNet:
+  # Küçük dataset'te overfitting'i azaltmak için ilk iki stage dondurulur.
+  freeze_at: 2
+  # Küçük batch'te BN güncellemesi gürültülü olabileceğinden sabitlenir.
+  freeze_norm: True
+  pretrained: True
+
+RTDETRTransformerv2:
+  # Ortalama nesne sayısına göre hız/FP dengesi için query azaltılır.
+  num_queries: 150
+  num_layers: 3
+
+HybridEncoder:
+  # Weight uyumluluğu için sabit tutulur.
+  hidden_dim: 256
+  expansion: 0.5
+
+optimizer:
+  type: AdamW
+  lr: 0.0002
+  weight_decay: 0.0001
+  betas: [0.9, 0.999]
+
+lr_scheduler:
+  type: CosineAnnealingLR
+  warmup_epochs: 5
+  cos_lr: True
+  min_lr_ratio: 0.005
+
+use_amp: True
+clip_max_norm: 0.1
+seed: 42
+
+# RT-DETR config anahtarında typo vardır: epoches
+epoches: 200
+print_freq: 20
+checkpoint_freq: 10
+output_dir: /content/outputs/pothole_rtdetrv2
+
+criterion:
+  weight_dict:
+    loss_vfl: 1.0
+    loss_bbox: 5.0
+    loss_giou: 2.0
+  focal_loss_alpha: 0.75
+  focal_loss_gamma: 2.0
+
+# Son 15 epoch'ta augmentation azaltma (multi-scale kapatma) politikası.
+# Not: Bu bölüm proje scriptleri tarafından okunup uygulanır.
+augmentation_policy:
+  disable_epoch: 185
+  collate_scales: ~
+
+# Recall ağırlıklı en iyi model metrik tanımı.
+selection_metric:
+  name: recall_map50_weighted
+  recall_weight: 0.6
+  map50_weight: 0.4
+
+early_stopping:
+  patience: 60
+  monitor: recall_map50_weighted
