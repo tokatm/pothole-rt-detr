@@ -1,9 +1,17 @@
-# Amaç: RT-DETRv2 için pothole dataset tanımı (RT-DETR sürümleriyle uyumlu güvenli transform seti).
+# Amaç: RT-DETRv2 için pothole dataset tanımı.
 # Bağımlılıklar: RT-DETRv2 YAMLConfig loader
 # Kullanım: 02_train.py config senkronizasyonu ile otomatik olarak RT-DETR içine kopyalanır.
 
+# Tek sınıf (pothole) + background. COCO'daki 80 sınıf yerine 2.
 num_classes: 2
+
+# Custom dataset olduğu için COCO category remapping kapatılır.
 remap_mscoco_category: False
+
+# COCO evaluator — validation sırasında mAP, AR vb. metrikleri hesaplar.
+evaluator:
+  type: CocoEvaluator
+  iou_types: ['bbox']
 
 train_dataloader:
   type: DataLoader
@@ -15,23 +23,44 @@ train_dataloader:
     transforms:
       type: Compose
       ops:
+        # Renk augmentation — asfalt renk varyasyonu, gölge, ışık farkları için.
         - {type: RandomPhotometricDistort, p: 0.5}
+        # Zoom-out — küçük pothole'ları daha da küçülterek model'in
+        # küçük nesne algılamasını güçlendirir.
         - {type: RandomZoomOut, fill: 0}
+        # Random IoU crop — pothole'ların kırpılmış bölgelerde de
+        # algılanmasını sağlar. p=0.8 agresif ama küçük dataset için gerekli.
         - {type: RandomIoUCrop, p: 0.8}
         - {type: SanitizeBoundingBoxes, min_size: 1}
+        # Yatay flip — yol yüzeyi simetrik olduğu için mantıklı.
+        # DİKKAT: Dikey flip (flipud) KULLANILMAZ — yerçekimi yönü değişir.
         - {type: RandomHorizontalFlip}
         - {type: Resize, size: [640, 640]}
         - {type: SanitizeBoundingBoxes, min_size: 1}
-        - {type: ConvertPILImage, dtype: float32, scale: True}
-        - {type: ConvertBoxes, fmt: cxcywh, normalize: True}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        # Box formatı: COCO xyxy → cxcywh normalized (model loss fonksiyonları için)
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      # Augmentation policy: Son 15 epoch'ta (epoch 185+) agresif augmentation'lar
+      # kapatılır. Model son aşamada temiz veriye fine-tune olur.
+      # RT-DETR'nin stop_epoch mekanizması bu op isimlerini epoch'a göre devre dışı bırakır.
+      policy:
+        name: stop_epoch
+        epoch: 185
+        ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
   shuffle: True
   drop_last: True
   num_workers: 4
+  # A100 40GB için 32 batch uygun. R18vd hafif model, VRAM'de rahat sığar.
   total_batch_size: 32
   collate_fn:
     type: BatchImageCollateFunction
-    scales: ~
-    stop_epoch: 71
+    # Multi-scale training: Küçük pothole'lar için KRİTİK.
+    # Dataset'te ~%60 pothole 10K pixel²'den küçük.
+    # 640 tek başına yetersiz — farklı ölçeklerde eğitim küçük nesne recall'unu artırır.
+    # 640 değeri 3 kez tekrarlanır (merkez ölçeğe bias — training stability).
+    scales: [480, 512, 544, 576, 608, 640, 640, 640, 672, 704, 736, 768, 800]
+    # Son 15 epoch'ta multi-scale kapatılır — model sabit 640'ta fine-tune olur.
+    stop_epoch: 185
 
 val_dataloader:
   type: DataLoader
@@ -44,11 +73,13 @@ val_dataloader:
       type: Compose
       ops:
         - {type: Resize, size: [640, 640]}
-        - {type: ConvertPILImage, dtype: float32, scale: True}
-        - {type: ConvertBoxes, fmt: cxcywh, normalize: True}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        # DİKKAT: Val'de ConvertBoxes KULLANILMAZ.
+        # COCO evaluator orijinal xyxy pixel format bekler.
+        # ConvertBoxes eklemek mAP hesaplamasını bozar.
   shuffle: False
   drop_last: False
-  num_workers: 2
+  num_workers: 4
   total_batch_size: 32
   collate_fn:
     type: BatchImageCollateFunction

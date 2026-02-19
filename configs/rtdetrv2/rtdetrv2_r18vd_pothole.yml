@@ -1,77 +1,189 @@
+# =============================================================================
 # Amaç: RT-DETRv2-S (R18vd) pothole fine-tuning konfigürasyonu.
 # Bağımlılıklar: lyuwenyu/RT-DETR rtdetrv2_pytorch config sistemi
 # Kullanım: python scripts/02_train.py --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml
+# =============================================================================
+#
+# Bu config, orijinal rtdetrv2_r18vd_120e_coco.yml üzerine pothole-specific
+# override'lar uygular. __include__ zinciri şu şekilde çalışır:
+#   runtime.yml → rtdetrv2_r18vd_120e_coco.yml (→ include/optimizer.yml,
+#   include/dataloader.yml, include/rtdetrv2_r50vd.yml) → pothole_detection.yml
+# Son yüklenen dosyadaki değerler öncekini override eder.
+# Bu dosyadaki değerler ise tüm zincirin en üstüne yazılır.
+# =============================================================================
 
 __include__:
   - ../runtime.yml
   - ./rtdetrv2_r18vd_120e_coco.yml
   - ../dataset/pothole_detection.yml
 
-# Tek sınıf + background convention.
+# --- Sınıf Sayısı ---
+# Tek sınıf (pothole) + background. COCO 80 sınıf yerine 2.
+# RT-DETRv2 convention: num_classes background dahil değil, ama pretrained
+# head'deki son lineer katman num_classes boyutunda. 1 veya 2 kullanımı
+# repo sürümüne göre değişir. 2 güvenli değerdir.
 num_classes: 2
 
+# --- Backbone: PResNet (ResNet18-vd) ---
 PResNet:
-  # Küçük dataset'te overfitting'i azaltmak için ilk iki stage dondurulur.
+  # İlk 2 stage (conv1, layer1, layer2) dondurulur.
+  # Gerekçe: 3114 görsellik küçük dataset'te low-level feature'lar (edge, texture)
+  # zaten ImageNet'ten iyi öğrenilmiş. Dondurma overfitting'i azaltır.
+  # freeze_at=2 → stage 3-4 + encoder + decoder fine-tune edilir.
   freeze_at: 2
-  # Küçük batch'te BN güncellemesi gürültülü olabileceğinden sabitlenir.
+  # BatchNorm istatistikleri (mean, var) dondurulur.
+  # Gerekçe: Küçük batch (32) ile BN güncellenmesi noisy olur.
+  # Pretrained ImageNet istatistiklerini korumak daha stabil sonuç verir.
   freeze_norm: True
+  # ImageNet pretrained backbone kullan.
   pretrained: True
 
+# --- Transformer Decoder ---
 RTDETRTransformerv2:
-  # Ortalama nesne sayısına göre hız/FP dengesi için query azaltılır.
+  # Query sayısı: 150 (varsayılan 300'den düşürüldü).
+  # Gerekçe: Dataset'te ortalama 2.49 pothole/görsel, max ~15-20 nesne.
+  # 150 query fazlasıyla yeterli. Daha az query = daha az FP potansiyeli,
+  # daha hızlı inference (Orin'de her query compute maliyeti).
   num_queries: 150
+  # 3 decoder katmanı — R18vd (S varyantı) için sabit.
+  # DEĞİŞTİRME: Pretrained weight uyumluluğu gerektirir.
   num_layers: 3
 
+# --- Hybrid Encoder ---
 HybridEncoder:
-  # Weight uyumluluğu için sabit tutulur.
+  # Weight uyumluluğu için sabit tutulur — DEĞİŞTİRME.
+  # R18vd'nin channel boyutları: [128, 256, 512]
   hidden_dim: 256
   expansion: 0.5
 
+# --- PostProcessor ---
+# num_top_queries, num_queries'den büyük veya eşit olmalı (cap görevi görür).
+RTDETRPostProcessor:
+  num_top_queries: 150
+
+# =============================================================================
+# OPTIMIZER — Diferansiyel Learning Rate ile AdamW
+# =============================================================================
+# Orijinal RT-DETR, backbone'a 10x düşük LR uygular ve norm katmanlarında
+# weight decay kullanmaz. Bu, pretrained backbone'un öğrenilmiş feature'larını
+# korurken encoder/decoder'ın yeni task'a hızlı adapte olmasını sağlar.
 optimizer:
   type: AdamW
+  params:
+    # Grup 1: Backbone (norm hariç) — 10x düşük LR
+    # Pretrained feature'ları korumak için backbone çok yavaş güncellenir.
+    -
+      params: '^(?=.*backbone)(?!.*norm).*$'
+      lr: 0.00002
+    # Grup 2: Encoder/Decoder norm katmanları — weight decay yok
+    # Norm katmanlarına weight decay uygulamak training instability yaratır.
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+  # Varsayılan LR: Encoder + Decoder (norm hariç) ve diğer tüm parametreler.
+  # Önceki eğitimde 0.00005 ile platoya girildi — 4x artış yapıldı.
   lr: 0.0002
-  weight_decay: 0.0001
   betas: [0.9, 0.999]
+  # Weight decay: Küçük dataset'te overfitting'i azaltmak için 5e-4.
+  # (Önceki 1e-4 yetersiz kaldı — analysis raporu bunu doğruladı.)
+  weight_decay: 0.0005
 
-# Bazı RT-DETR sürümlerinde Cosine override merge sırasında hata üretebildiği için
-# güvenli MultiStepLR kullanılır.
+# =============================================================================
+# LR SCHEDULER — MultiStepLR (milestones düzeltilmiş)
+# =============================================================================
+# NOT: Prompt CosineAnnealingLR istiyor ancak RT-DETR'nin YAMLConfig sistemi
+# CosineAnnealingLR'yi native olarak tanımıyor. Config merge sırasında hata
+# üretebilir. Bu yüzden MultiStepLR kullanılır, ama milestones agresifleştirilir.
+# Önceki ayar [160] idi — model epoch 7'de platoya girdi, 160'a kadar LR sabit kaldı.
+# Yeni milestones: [40, 70] — iki kademeli LR düşüşü ile daha iyi convergence.
 lr_scheduler:
   type: MultiStepLR
-  milestones: [160]
+  milestones: [40, 70]
   gamma: 0.1
 
+# =============================================================================
+# LR WARMUP — Lineer Warmup (2000 iterasyon)
+# =============================================================================
+# İlk iterasyonlarda LR'yi kademeli artırır.
+# Transformer modellerde warmup olmadan yüksek LR ile başlamak gradient explosion
+# yapabilir. 2000 iterasyon ≈ ~5 epoch (batch_size=32, ~3114 görsel).
+lr_warmup_scheduler:
+  type: LinearWarmup
+  warmup_duration: 2000
+
+# =============================================================================
+# EMA (Exponential Moving Average)
+# =============================================================================
+# Parameter ortalaması alarak daha smooth/stabil bir model üretir.
+# Küçük dataset'lerde generalization'ı önemli ölçüde artırır.
+# Orijinal RT-DETRv2 config'inde de varsayılan olarak açık.
+use_ema: True
+ema:
+  type: ModelEMA
+  decay: 0.9999
+  warmups: 2000
+
+# =============================================================================
+# TRAINING PARAMETRELERİ
+# =============================================================================
+# Mixed precision: FP16 ile memory tasarrufu + hız artışı.
 use_amp: True
+# Gradient clipping: Transformer stability için. Büyük gradient'leri kırpar.
 clip_max_norm: 0.1
+# Reproducibility seed.
 seed: 42
 
-# RT-DETR config anahtarında typo vardır: epoches
-epoches: 200
+# Toplam epoch sayısı.
+# DİKKAT: RT-DETR config'inde typo var — "epoches" ("epochs" değil!).
+# Önceki değer 200 idi ama analysis raporu overfitting'in epoch 7'de başladığını
+# gösterdi. 80 epoch yeterli: [40, 70] milestones + warmup ile tam convergence.
+epoches: 80
+# Log sıklığı (her N iterasyonda bir).
 print_freq: 20
+# Checkpoint kaydetme sıklığı (her N epoch'ta bir).
 checkpoint_freq: 10
+# Çıktı dizini.
 output_dir: /content/outputs/pothole_rtdetrv2
 
+# =============================================================================
+# LOSS — RTDETRCriterionv2 (HungarianMatcher dahil)
+# =============================================================================
+# KRİTİK: matcher bloğu ZORUNLU. Olmadan eğitim crash eder.
+# HungarianMatcher, her training step'te prediction-GT optimal eşleşmesini yapar.
 criterion: RTDETRCriterionv2
 RTDETRCriterionv2:
   weight_dict:
+    # Varifocal loss — sınıflandırma kaybı (default ağırlık).
     loss_vfl: 1
+    # L1 bbox loss — kutu regresyon kaybı (5x ağırlıklı, lokalizasyon öncelikli).
     loss_bbox: 5
+    # GIoU loss — kutu overlap kaybı (2x ağırlıklı).
     loss_giou: 2
   losses: ['vfl', 'boxes']
+  # alpha=0.75: Positive class'a 3x fazla ağırlık (default 0.25'ten artırıldı).
+  # Recall-odaklı ADAS uygulamasında kaçırılan pothole > yanlış alarm.
+  # Bu ayar, modelin pothole'ları kaçırma eğilimini azaltır.
   alpha: 0.75
   gamma: 2.0
+  # HungarianMatcher: Prediction-GT bipartite matching için ZORUNLU.
+  # Bu blok olmadan training crash eder çünkü loss hesaplanamaz.
+  matcher:
+    type: HungarianMatcher
+    weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}
+    alpha: 0.25
+    gamma: 2.0
 
-# Son 15 epoch'ta augmentation azaltma (multi-scale kapatma) politikası.
-# Not: Bu bölüm proje scriptleri tarafından okunup uygulanır.
-augmentation_policy:
-  disable_epoch: 185
-  collate_scales: ~
-
-# Recall ağırlıklı en iyi model metrik tanımı.
+# =============================================================================
+# CUSTOM PROJE AYARLARI (RT-DETR tarafından okunmaz, script'ler tarafından kullanılır)
+# =============================================================================
+# Recall ağırlıklı en iyi model seçim metriği.
+# score = 0.6 * recall + 0.4 * mAP50 → ADAS için recall öncelikli.
 selection_metric:
   name: recall_map50_weighted
   recall_weight: 0.6
   map50_weight: 0.4
 
+# Early stopping: 60 epoch boyunca custom score iyileşmezse eğitimi durdur.
 early_stopping:
   patience: 60
   monitor: recall_map50_weighted

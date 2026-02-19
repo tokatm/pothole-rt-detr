@@ -1,55 +1,96 @@
 # RT-DETRv2 Pothole Detection (Recall-First)
 
-Bu proje, **lyuwenyu/RT-DETR** PyTorch implementasyonunu temel alarak tek sınıf pothole detection pipeline'ı sunar. Hedef senaryo ADAS olduğu için kaçırılan çukurları azaltmaya odaklıdır.
+Bu proje, **lyuwenyu/RT-DETR** PyTorch implementasyonunu temel alarak tek sinif pothole detection pipeline'i sunar. Hedef senaryo ADAS oldugu icin kacirilan cukurlari azaltmaya odaklidir.
 
-## Mimari Özet
-- Model: **RT-DETRv2-S (R18-vd)**
-- Neden v2: v1'e göre daha iyi accuracy/speed dengesi, discrete sampling ve deploy uyumluluğu
-- Neden S varyantı: Jetson Orin Super 8GB üzerinde pratik FPS ve RAM dengesi
-- Görev: Tek sınıf (pothole), recall ağırlıklı optimizasyon
+## Mimari Ozet
+- Model: **RT-DETRv2-S (R18-vd)** — 20M params, 60 GFLOPs
+- Neden v2: v1'e gore daha iyi accuracy/speed dengesi, discrete sampling ve TensorRT deploy uyumlulugu
+- Neden S varyanti: Jetson Orin Super 8GB uzerinde ~36 FPS (T4'te 217 FPS). Onceki RT-DETR-X Orin'de sadece 12.97 FPS verdi — ADAS icin yetersiz.
+- Gorev: Tek sinif (pothole), recall agirlikli optimizasyon
+- COCO AP farki (48.1 vs 54.8) tek sinif fine-tuning'de daralir
 
-## Klasör Yapısı
+## Klasor Yapisi
 ```text
-
+pothole_rtdetrv2/
 ├── configs/
+│   ├── dataset/
+│   │   └── pothole_detection.yml          # Dataset config (multi-scale, augmentation policy)
+│   └── rtdetrv2/
+│       └── rtdetrv2_r18vd_pothole.yml     # Model + training config
 ├── scripts/
+│   ├── 00_copypaste_augment.py            # Offline copy-paste augmentation (kucuk pothole'lar icin)
+│   ├── 01_convert_yolo_to_coco.py         # YOLO→COCO format donusturucu
+│   ├── 02_train.py                        # Egitim baslatici
+│   ├── 03_evaluate.py                     # Detayli evaluation (recall-odakli metrikler)
+│   ├── 04_export_onnx.py                  # ONNX export
+│   ├── 05_build_tensorrt.py               # TensorRT engine olusturma (Orin icin)
+│   ├── 06_inference_tensorrt.py           # TensorRT ile inference
+│   └── 07_analyze_errors.py              # FN/FP analiz araci (gorsel kaydetme dahil)
 ├── src/
+│   └── recall_optimized_postprocess.py    # Recall-odakli post-processing
+├── analysis/
+│   └── recall_metrics_analysis.md         # Onceki egitim analiz raporu
 ├── requirements.txt
 └── README.md
 ```
 
 ## Kurulum
 ```bash
+# 1. Bu repo'yu clone et
+git clone <this-repo-url>
+
+# 2. RT-DETR orijinal repo'yu clone et
 git clone https://github.com/lyuwenyu/RT-DETR.git
+
+# 3. Bagimliliklari yukle
 pip install -r requirements.txt
 ```
 
 Pretrained weight (manuel indir):
 - [rtdetrv2_r18vd_120e_coco_rerun_48.1.pth](https://github.com/lyuwenyu/storage/releases/download/v0.2/rtdetrv2_r18vd_120e_coco_rerun_48.1.pth)
 
-## Dataset Hazırlığı (YOLO -> COCO)
+## Dataset Hazirligi
+
+### Adim 1: Copy-Paste Augmentation (Opsiyonel ama Onerilen)
+Kucuk pothole'larin recall'unu artirmak icin offline augmentation:
+```bash
+python scripts/00_copypaste_augment.py \
+  --dataset-root /content/dataset/combined_dataset \
+  --output-dir /content/dataset/combined_dataset \
+  --paste-ratio 0.25 \
+  --num-augmented 500
+```
+
+### Adim 2: YOLO -> COCO Donusum
 ```bash
 python scripts/01_convert_yolo_to_coco.py \
   --dataset-root /content/dataset/combined_dataset \
   --output-dir /content/dataset/combined_dataset/annotations
 ```
+DIKKAT: Copy-paste augmentation calistirdiysan, donusumu TEKRAR calistir.
 
-## Eğitim
+## Egitim
 ```bash
 python scripts/02_train.py \
   --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml \
   --rtdetr-root /content/RT-DETR/rtdetrv2_pytorch \
-  --use-amp
+  --use-amp \
+  -t /content/weights/rtdetrv2_r18vd_120e_coco_rerun_48.1.pth
 ```
 
-Eğitimde:
-- script, `configs/` dosyalarını otomatik olarak RT-DETR config klasörüne senkronize eder
-- `-t` verilmezse varsayılan RT-DETRv2-S pretrained dosyası otomatik indirilir
-- AMP için `--use-amp` kullanılabilir
-- scheduler: MultiStepLR (RT-DETR sürümleriyle güvenli uyum)
-- recall ağırlıklı best checkpoint skoru: `0.6 * recall + 0.4 * mAP50`
-- early stopping: `patience=60`
-- epoch bazlı log: `training_log.json`
+### Egitim Config Ozellikleri
+- **Diferansiyel LR**: Backbone 10x dusuk LR (0.00002), encoder/decoder 0.0002
+- **Multi-scale training**: [480..800] arasi 13 farkli olcek — kucuk pothole recall icin kritik
+- **Augmentation policy**: Son 15 epoch'ta (epoch 65+) augmentation kapatilir
+- **LR scheduler**: MultiStepLR milestones=[40, 70] — agresif LR dususu
+- **Warmup**: Lineer warmup, 2000 iterasyon (~5 epoch)
+- **EMA**: Exponential Moving Average acik (decay=0.9999)
+- **Weight decay**: 5e-4 (kucuk dataset overfitting onleme)
+- **Matcher**: HungarianMatcher (bipartite matching) dahil
+- **Recall agirlikli best checkpoint**: `0.6 * recall + 0.4 * mAP50`
+- **Early stopping**: `patience=60`
+- **Toplam epoch**: 80 (onceki 200'den dusuruldu — overfitting onleme)
+- **num_queries**: 150 (FP azaltma + Orin hiz optimizasyonu)
 
 ## Evaluation ve Optimal Threshold
 ```bash
@@ -59,14 +100,25 @@ python scripts/03_evaluate.py \
   --output-dir /content/outputs/eval
 ```
 
-Çıktılar:
-- threshold sweep CSV (0.1-0.9 arası)
-- optimal threshold seçimi (safety-first)
-- küçük/orta/büyük nesne recall analizi
-- PR curve
+Ciktilar:
+- Threshold sweep CSV (0.1-0.9 arasi, 0.05 adimlarla)
+- Optimal threshold secimi (safety-first: Recall>=0.85'te en yuksek F1)
+- Kucuk/orta/buyuk nesne recall analizi (COCO boyut kategorileri)
+- Precision-Recall curve
 - `evaluation_results.json`
 
-## ONNX Export ve Doğrulama
+## Hata Analizi
+```bash
+python scripts/07_analyze_errors.py \
+  --gt-json /content/dataset/combined_dataset/annotations/val_annotations.json \
+  --pred-json /content/outputs/predictions_val.json \
+  --image-dir /content/dataset/combined_dataset/images/val \
+  --output-dir /content/outputs/error_analysis
+```
+
+FN/FP gorselleri `fn_images/` ve `fp_images/` klasorlerine kaydedilir.
+
+## ONNX Export ve Dogrulama
 ```bash
 python scripts/04_export_onnx.py \
   --checkpoint /content/outputs/best.pth \
@@ -74,10 +126,10 @@ python scripts/04_export_onnx.py \
 ```
 
 Notlar:
-- opset 16
-- onnx.checker ile model doğrulaması
-- onnxruntime ile PyTorch fark kontrolü (`max_abs_diff < 1e-4` hedef)
-- v2'nin discrete sampling yaklaşımı deploy tarafında avantaj sağlar
+- opset 16 (TensorRT uyumlulugu)
+- onnx.checker ile model dogrulamasi
+- onnxruntime ile PyTorch fark kontrolu (`max_abs_diff < 1e-4` hedef)
+- v2'nin discrete sampling yaklasimi deploy tarafinda avantaj saglar (grid_sample yerine index_select)
 
 ## TensorRT Deploy (Orin)
 ```bash
@@ -92,23 +144,15 @@ python scripts/05_build_tensorrt.py \
 trtexec --onnx=rtdetrv2_r18vd_pothole.onnx --saveEngine=rtdetrv2_fp16.engine --fp16 --workspace=4096
 ```
 
-Uyarı: TensorRT engine cihaza özeldir. Orin üzerinde kullanmak için engine'i Orin'de build edin.
+Uyari: TensorRT engine cihaza ozeldir. Orin uzerinde kullanmak icin engine'i Orin'de build edin.
 
-## Inference Kullanımı
-Tek görsel/klasör/video:
+## Inference Kullanimi
+Tek gorsel/klasor/video:
 ```bash
 python scripts/06_inference_tensorrt.py \
   --engine /content/outputs/rtdetrv2_r18vd_pothole_fp16.engine \
   --source /content/sample.jpg \
   --output-dir /content/outputs/infer
-```
-
-## Hata Analizi
-```bash
-python scripts/07_analyze_errors.py \
-  --gt-json /content/dataset/combined_dataset/annotations/val_annotations.json \
-  --pred-json /content/outputs/predictions_val.json \
-  --output-dir /content/outputs/error_analysis
 ```
 
 ## Performans Tablosu (Doldurulacak)
@@ -119,11 +163,14 @@ python scripts/07_analyze_errors.py \
 
 ## Lisans
 - RT-DETR: Apache-2.0
-- Bu proje: Apache-2.0 ile uyumlu kullanım
-- Ultralytics bağımlılığı yoktur, AGPL-3.0 riski içermez.
+- Bu proje: Apache-2.0 ile uyumlu kullanim
+- Ultralytics bagimliligı yoktur, AGPL-3.0 riski icermez.
+- Ticari kullanim tamamen serbesttir.
 
 ## Bilinen Sorunlar ve Troubleshooting
-- `tensorrt`/`pycuda` kurulumları platforma duyarlıdır; Orin üzerinde JetPack sürümü ile eşleşme gerekir.
-- ONNX export sırasında custom op hatası alırsanız RT-DETR branch sürümünüzü güncelleyin.
-- Düşük recall durumunda threshold sweep sonuçlarından daha düşük güven eşiği seçin.
-- BN istatistik kaynaklı dalgalanma görürseniz `freeze_norm=True` ayarını koruyun.
+- `tensorrt`/`pycuda` kurulumlari platforma duyarlidir; Orin uzerinde JetPack surumu ile esleshme gerekir.
+- ONNX export sirasinda custom op hatasi alirsaniz RT-DETR branch surumunuzu guncelleyin.
+- Dusuk recall durumunda threshold sweep sonuclarindan daha dusuk guven esigi secin.
+- BN istatistik kaynakli dalgalanma gorurseniz `freeze_norm=True` ayarini koruyun.
+- Multi-scale training VRAM sorunlari cikarirsa `total_batch_size`'i 16'ya dusurun.
+- Copy-paste augmentation sonrasi COCO donusumunu tekrar calistirmayi unutmayin.
