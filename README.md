@@ -10,7 +10,7 @@ Bu proje, **lyuwenyu/RT-DETR** PyTorch implementasyonunu temel alarak tek sını
 
 ## Klasör Yapısı
 ```text
-pothole_rtdetrv2/
+
 ├── configs/
 ├── scripts/
 ├── src/
@@ -21,7 +21,7 @@ pothole_rtdetrv2/
 ## Kurulum
 ```bash
 git clone https://github.com/lyuwenyu/RT-DETR.git
-pip install -r pothole_rtdetrv2/requirements.txt
+pip install -r requirements.txt
 ```
 
 Pretrained weight (manuel indir):
@@ -29,15 +29,15 @@ Pretrained weight (manuel indir):
 
 ## Dataset Hazırlığı (YOLO -> COCO)
 ```bash
-python pothole_rtdetrv2/scripts/01_convert_yolo_to_coco.py \
+python scripts/01_convert_yolo_to_coco.py \
   --dataset-root /content/dataset/combined_dataset \
   --output-dir /content/dataset/combined_dataset/annotations
 ```
 
 ## Eğitim
 ```bash
-python pothole_rtdetrv2/scripts/02_train.py \
-  --config pothole_rtdetrv2/configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml \
+python scripts/02_train.py \
+  --config configs/rtdetrv2/rtdetrv2_r18vd_pothole.yml \
   --rtdetr-root /content/RT-DETR/rtdetrv2_pytorch \
   -t /content/weights/rtdetrv2_r18vd_120e_coco_rerun_48.1.pth
 ```
@@ -50,7 +50,7 @@ Eğitimde:
 
 ## Evaluation ve Optimal Threshold
 ```bash
-python pothole_rtdetrv2/scripts/03_evaluate.py \
+python scripts/03_evaluate.py \
   --gt-json /content/dataset/combined_dataset/annotations/val_annotations.json \
   --pred-json /content/outputs/predictions_val.json \
   --output-dir /content/outputs/eval
@@ -65,8 +65,8 @@ python pothole_rtdetrv2/scripts/03_evaluate.py \
 
 ## ONNX Export ve Doğrulama
 ```bash
-python pothole_rtdetrv2/scripts/04_export_onnx.py \
-  --checkpoint /content/outputs/pothole_rtdetrv2/best.pth \
+python scripts/04_export_onnx.py \
+  --checkpoint /content/outputs/best.pth \
   --output /content/outputs/rtdetrv2_r18vd_pothole.onnx
 ```
 
@@ -78,7 +78,7 @@ Notlar:
 
 ## TensorRT Deploy (Orin)
 ```bash
-python pothole_rtdetrv2/scripts/05_build_tensorrt.py \
+python scripts/05_build_tensorrt.py \
   --onnx /content/outputs/rtdetrv2_r18vd_pothole.onnx \
   --engine /content/outputs/rtdetrv2_r18vd_pothole_fp16.engine \
   --fp16
@@ -94,7 +94,7 @@ Uyarı: TensorRT engine cihaza özeldir. Orin üzerinde kullanmak için engine'i
 ## Inference Kullanımı
 Tek görsel/klasör/video:
 ```bash
-python pothole_rtdetrv2/scripts/06_inference_tensorrt.py \
+python scripts/06_inference_tensorrt.py \
   --engine /content/outputs/rtdetrv2_r18vd_pothole_fp16.engine \
   --source /content/sample.jpg \
   --output-dir /content/outputs/infer
@@ -102,7 +102,7 @@ python pothole_rtdetrv2/scripts/06_inference_tensorrt.py \
 
 ## Hata Analizi
 ```bash
-python pothole_rtdetrv2/scripts/07_analyze_errors.py \
+python scripts/07_analyze_errors.py \
   --gt-json /content/dataset/combined_dataset/annotations/val_annotations.json \
   --pred-json /content/outputs/predictions_val.json \
   --output-dir /content/outputs/error_analysis
