@@ -18,6 +18,7 @@ pothole_rtdetrv2/
 │   └── rtdetrv2/
 │       └── rtdetrv2_r18vd_pothole.yml     # Model + training config
 ├── scripts/
+│   ├── 00_fix_oversized_images.py         # Oversized goruntu guvenlik/resize adimi
 │   ├── 00_copypaste_augment.py            # Offline copy-paste augmentation (kucuk pothole'lar icin)
 │   ├── 01_convert_yolo_to_coco.py         # YOLO→COCO format donusturucu
 │   ├── 02_train.py                        # Egitim baslatici
@@ -65,9 +66,13 @@ python scripts/00_copypaste_augment.py \
 ```bash
 python scripts/01_convert_yolo_to_coco.py \
   --dataset-root /content/dataset/combined_dataset \
-  --output-dir /content/dataset/combined_dataset/annotations
+  --output-dir /content/dataset/combined_dataset/annotations \
+  --min-side-px 32
 ```
-DIKKAT: Copy-paste augmentation calistirdiysan, donusumu TEKRAR calistir.
+DIKKAT:
+- Copy-paste augmentation calistirdiysan, donusumu TEKRAR calistir.
+- `01_convert_yolo_to_coco.py` varsayilan olarak once `00_fix_oversized_images.py`
+  calistirir. Bu sayede DecompressionBombError riski JSON'dan once temizlenir.
 
 ## Egitim
 ```bash
@@ -81,8 +86,8 @@ python scripts/02_train.py \
 ### Egitim Config Ozellikleri
 - **Diferansiyel LR**: Backbone 10x dusuk LR (0.00002), encoder/decoder 0.0002
 - **Multi-scale training**: [480..800] arasi 13 farkli olcek — kucuk pothole recall icin kritik
-- **Augmentation policy**: Son 15 epoch'ta (epoch 65+) augmentation kapatilir
-- **LR scheduler**: MultiStepLR milestones=[40, 70] — agresif LR dususu
+- **Augmentation policy**: Son 10 epoch'ta (epoch 70+) augmentation kapatilir
+- **LR scheduler**: MultiStepLR milestones=[20, 35, 50] — erken plateau kirma
 - **Warmup**: Lineer warmup, 2000 iterasyon (~5 epoch)
 - **EMA**: Exponential Moving Average acik (decay=0.9999)
 - **Weight decay**: 5e-4 (kucuk dataset overfitting onleme)

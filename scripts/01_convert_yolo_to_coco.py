@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -60,6 +62,21 @@ def parse_args() -> argparse.Namespace:
         default=32.0,
         help="Bu değere eşit veya daha küçük kısa kenara sahip bbox'ları ele.",
     )
+    parser.add_argument(
+        "--fix-oversized-before-convert",
+        dest="fix_oversized_before_convert",
+        action="store_true",
+        default=True,
+        help="JSON donusumunden once oversized image fix scriptini calistir.",
+    )
+    parser.add_argument(
+        "--no-fix-oversized-before-convert",
+        dest="fix_oversized_before_convert",
+        action="store_false",
+        help="Oversized image fix adimini kapat.",
+    )
+    parser.add_argument("--oversized-warn-pixels", type=int, default=120_000_000)
+    parser.add_argument("--oversized-target-max-pixels", type=int, default=80_000_000)
     return parser.parse_args()
 
 
@@ -167,6 +184,21 @@ def main() -> None:
     """Program giris noktasi."""
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.fix_oversized_before_convert:
+        fix_script = Path(__file__).with_name("00_fix_oversized_images.py")
+        cmd = [
+            sys.executable,
+            str(fix_script),
+            "--dataset-root",
+            str(args.dataset_root),
+            "--warn-pixels",
+            str(args.oversized_warn_pixels),
+            "--target-max-pixels",
+            str(args.oversized_target_max_pixels),
+        ]
+        LOGGER.info("Oversized pre-step calistiriliyor: %s", " ".join(cmd))
+        subprocess.run(cmd, check=True)
 
     for split in ("train", "val"):
         coco = convert_split(args.dataset_root, split, args.min_side_px)
