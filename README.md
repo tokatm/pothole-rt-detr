@@ -69,6 +69,9 @@ python scripts/01_convert_yolo_to_coco.py \
   --dataset-root /content/dataset/combined_dataset \
   --output-dir /content/dataset/combined_dataset/annotations \
   --min-side-px 32 \
+  --small-object-upscale-before-convert \
+  --small-object-upscale-target-short-sides 800,832,896,960,1024 \
+  --exclude-original-small-after-upscale \
   --mixup-before-convert \
   --mixup-ratio 0.20 \
   --mixup-alpha 0.4
@@ -77,6 +80,10 @@ DIKKAT:
 - Copy-paste augmentation calistirdiysan, donusumu TEKRAR calistir.
 - `01_convert_yolo_to_coco.py` varsayilan olarak once `00_fix_oversized_images.py`
   calistirir. Bu sayede DecompressionBombError riski JSON'dan once temizlenir.
+- `--small-object-upscale-before-convert` sadece `<min-side-px` bbox iceren train
+  ornekleri icin `smallup_*` sample uretir (global degil).
+- `--exclude-original-small-after-upscale` aciksa, bu kucuk orneklerin orijinalleri
+  train JSON'a alinmaz; boylece buyuk olcek etkisi sadece bu gruba uygulanir.
 - Mixup adimi opsiyoneldir; sadece `--mixup-before-convert` verilirse train split'e yeni
   sentetik sample uretir.
 

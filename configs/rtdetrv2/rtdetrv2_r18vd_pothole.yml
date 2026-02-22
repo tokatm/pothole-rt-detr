@@ -7,14 +7,14 @@
 # Bu config, orijinal rtdetrv2_r18vd_120e_coco.yml üzerine pothole-specific
 # override'lar uygular. __include__ zinciri şu şekilde çalışır:
 #   runtime.yml → rtdetrv2_r18vd_120e_coco.yml (→ include/optimizer.yml,
-#   include/dataloader.yml, include/rtdetrv2_r50vd.yml) → pothole_detection.yml
+#   include/dataloader.yml, include/rtdetrv2_r18vd.yml) → pothole_detection.yml
 # Son yüklenen dosyadaki değerler öncekini override eder.
 # Bu dosyadaki değerler ise tüm zincirin en üstüne yazılır.
 # =============================================================================
 
 __include__:
   - ../runtime.yml
-  - ./rtdetrv2_r34vd_120e_coco.yml
+  - ./rtdetrv2_r18vd_120e_coco.yml
   - ../dataset/pothole_detection.yml
 
 # --- Sınıf Sayısı ---
