@@ -7,8 +7,7 @@ Dependencies:
 Usage:
     python scripts/01_convert_yolo_to_coco.py \
         --dataset-root /content/dataset/combined_dataset \
-        --output-dir /content/dataset/combined_dataset/annotations \
-        --min-side-px 32
+        --output-dir /content/dataset/combined_dataset/annotations
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 from PIL import Image
 
@@ -57,12 +56,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
-        "--min-side-px",
-        type=float,
-        default=32.0,
-        help="Bu değere eşit veya daha küçük kısa kenara sahip bbox'ları ele.",
-    )
-    parser.add_argument(
         "--fix-oversized-before-convert",
         dest="fix_oversized_before_convert",
         action="store_true",
@@ -86,22 +79,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mixup-alpha", type=float, default=0.4)
     parser.add_argument("--mixup-seed", type=int, default=42)
     parser.add_argument("--mixup-max-samples", type=int, default=1000)
-    parser.add_argument(
-        "--small-object-upscale-before-convert",
-        action="store_true",
-        help="JSON donusumunden once <min-side-px sample'lar icin offline upscale uret.",
-    )
-    parser.add_argument(
-        "--small-object-upscale-target-short-sides",
-        type=str,
-        default="800,832,896,960,1024",
-        help="Upscale kisa kenar adaylari (virgulle ayrilmis).",
-    )
-    parser.add_argument(
-        "--exclude-original-small-after-upscale",
-        action="store_true",
-        help="Upscale uretilen kucuk sample'larin orijinal stemlerini train conversion'da atla.",
-    )
     return parser.parse_args()
 
 
@@ -116,12 +93,7 @@ def yolo_to_coco_bbox(
     return max(0.0, x_min), max(0.0, y_min), max(0.0, w_px), max(0.0, h_px)
 
 
-def convert_split(
-    dataset_root: Path,
-    split: str,
-    min_side_px: float,
-    skip_train_stems: Set[str] | None = None,
-) -> Dict[str, List[Dict]]:
+def convert_split(dataset_root: Path, split: str) -> Dict[str, List[Dict]]:
     """Belirli split'i YOLO formatindan COCO dict'e donusturur."""
     image_dir = dataset_root / "images" / split
     label_dir = dataset_root / "labels" / split
@@ -134,15 +106,12 @@ def convert_split(
 
     image_id = 1
     annotation_id = 1
-    filtered_small = 0
 
     image_files = sorted(
         [p for p in image_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}]
     )
 
     for image_path in image_files:
-        if split == "train" and skip_train_stems and image_path.stem in skip_train_stems:
-            continue
         label_path = label_dir / f"{image_path.stem}.txt"
         try:
             with Image.open(image_path) as img:
@@ -177,10 +146,6 @@ def convert_split(
                     LOGGER.warning("Beklenmeyen class id (%s), atlandi: %s", int(cls), line)
                     continue
                 coco_bbox = yolo_to_coco_bbox(x_c, y_c, w, h, width, height)
-                # Hedef: bildirime değmeyecek kadar küçük çukurları eğitimden çıkar.
-                if min(coco_bbox[2], coco_bbox[3]) <= min_side_px:
-                    filtered_small += 1
-                    continue
                 area = coco_bbox[2] * coco_bbox[3]
                 annotation_records.append(
                     CocoAnnotation(
@@ -203,12 +168,6 @@ def convert_split(
         "annotations": annotation_records,
         "categories": [{"id": 1, "name": "pothole"}],
     }
-    LOGGER.info(
-        "%s split | min_side<=%.1fpx filtrelendi: %d",
-        split,
-        min_side_px,
-        filtered_small,
-    )
     return coco
 
 
@@ -251,39 +210,8 @@ def main() -> None:
         LOGGER.info("Mixup pre-step calistiriliyor: %s", " ".join(cmd))
         subprocess.run(cmd, check=True)
 
-    skip_train_stems: Set[str] = set()
-    if args.small_object_upscale_before_convert:
-        upscale_script = Path(__file__).with_name("00_small_object_upscale.py")
-        cmd = [
-            sys.executable,
-            str(upscale_script),
-            "--dataset-root",
-            str(args.dataset_root),
-            "--min-side-px",
-            str(args.min_side_px),
-            "--target-short-sides",
-            str(args.small_object_upscale_target_short_sides),
-        ]
-        if args.exclude_original_small_after_upscale:
-            cmd.append("--exclude-original-small")
-        LOGGER.info("Small-object upscale pre-step calistiriliyor: %s", " ".join(cmd))
-        subprocess.run(cmd, check=True)
-
-        if args.exclude_original_small_after_upscale:
-            skip_file = args.dataset_root / "annotations" / "small_object_original_stems.txt"
-            if skip_file.exists():
-                skip_train_stems = {
-                    x.strip() for x in skip_file.read_text(encoding="utf-8").splitlines() if x.strip()
-                }
-                LOGGER.info("Train conversion'da atlanacak kucuk-orijinal stem sayisi: %d", len(skip_train_stems))
-
     for split in ("train", "val"):
-        coco = convert_split(
-            args.dataset_root,
-            split,
-            args.min_side_px,
-            skip_train_stems=skip_train_stems,
-        )
+        coco = convert_split(args.dataset_root, split)
         out_path = args.output_dir / f"{split}_annotations.json"
         out_path.write_text(json.dumps(coco, ensure_ascii=False, indent=2), encoding="utf-8")
         LOGGER.info(
