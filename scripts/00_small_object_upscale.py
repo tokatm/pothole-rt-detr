@@ -124,6 +124,9 @@ def run(args: argparse.Namespace) -> None:
                 continue
 
             resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+            # JPEG, RGBA desteklemez; alpha iceren goruntuleri RGB'ye cevir.
+            if resized.mode not in ("RGB", "L"):
+                resized = resized.convert("RGB")
             resized.save(out_img, quality=95)
             # YOLO label normalize oldugu icin uniform resize'da label satirlari ayni kalir.
             out_lbl.write_text(lbl.read_text(encoding="utf-8"), encoding="utf-8")
