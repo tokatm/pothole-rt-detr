@@ -77,6 +77,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--oversized-warn-pixels", type=int, default=120_000_000)
     parser.add_argument("--oversized-target-max-pixels", type=int, default=80_000_000)
+    parser.add_argument(
+        "--mixup-before-convert",
+        action="store_true",
+        help="JSON donusumunden once offline mixup augmentation uret.",
+    )
+    parser.add_argument("--mixup-ratio", type=float, default=0.20)
+    parser.add_argument("--mixup-alpha", type=float, default=0.4)
+    parser.add_argument("--mixup-seed", type=int, default=42)
+    parser.add_argument("--mixup-max-samples", type=int, default=1000)
     return parser.parse_args()
 
 
@@ -198,6 +207,25 @@ def main() -> None:
             str(args.oversized_target_max_pixels),
         ]
         LOGGER.info("Oversized pre-step calistiriliyor: %s", " ".join(cmd))
+        subprocess.run(cmd, check=True)
+
+    if args.mixup_before_convert:
+        mixup_script = Path(__file__).with_name("00_mixup_augment.py")
+        cmd = [
+            sys.executable,
+            str(mixup_script),
+            "--dataset-root",
+            str(args.dataset_root),
+            "--ratio",
+            str(args.mixup_ratio),
+            "--alpha",
+            str(args.mixup_alpha),
+            "--seed",
+            str(args.mixup_seed),
+            "--max-samples",
+            str(args.mixup_max_samples),
+        ]
+        LOGGER.info("Mixup pre-step calistiriliyor: %s", " ".join(cmd))
         subprocess.run(cmd, check=True)
 
     for split in ("train", "val"):

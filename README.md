@@ -20,6 +20,7 @@ pothole_rtdetrv2/
 ├── scripts/
 │   ├── 00_fix_oversized_images.py         # Oversized goruntu guvenlik/resize adimi
 │   ├── 00_copypaste_augment.py            # Offline copy-paste augmentation (kucuk pothole'lar icin)
+│   ├── 00_mixup_augment.py                # Offline mixup augmentation (opsiyonel)
 │   ├── 01_convert_yolo_to_coco.py         # YOLO→COCO format donusturucu
 │   ├── 02_train.py                        # Egitim baslatici
 │   ├── 03_evaluate.py                     # Detayli evaluation (recall-odakli metrikler)
@@ -67,12 +68,17 @@ python scripts/00_copypaste_augment.py \
 python scripts/01_convert_yolo_to_coco.py \
   --dataset-root /content/dataset/combined_dataset \
   --output-dir /content/dataset/combined_dataset/annotations \
-  --min-side-px 32
+  --min-side-px 32 \
+  --mixup-before-convert \
+  --mixup-ratio 0.20 \
+  --mixup-alpha 0.4
 ```
 DIKKAT:
 - Copy-paste augmentation calistirdiysan, donusumu TEKRAR calistir.
 - `01_convert_yolo_to_coco.py` varsayilan olarak once `00_fix_oversized_images.py`
   calistirir. Bu sayede DecompressionBombError riski JSON'dan once temizlenir.
+- Mixup adimi opsiyoneldir; sadece `--mixup-before-convert` verilirse train split'e yeni
+  sentetik sample uretir.
 
 ## Egitim
 ```bash
@@ -86,15 +92,15 @@ python scripts/02_train.py \
 ### Egitim Config Ozellikleri
 - **Diferansiyel LR**: Backbone 10x dusuk LR (0.00002), encoder/decoder 0.0002
 - **Multi-scale training**: [480..800] arasi 13 farkli olcek — kucuk pothole recall icin kritik
-- **Augmentation policy**: Son 10 epoch'ta (epoch 70+) augmentation kapatilir
-- **LR scheduler**: MultiStepLR milestones=[20, 35, 50] — erken plateau kirma
+- **Augmentation policy**: Son 10 epoch'ta (epoch 40+) augmentation kapatilir
+- **LR scheduler**: MultiStepLR milestones=[15, 30] — erken plateau kirma
 - **Warmup**: Lineer warmup, 2000 iterasyon (~5 epoch)
 - **EMA**: Exponential Moving Average acik (decay=0.9999)
 - **Weight decay**: 5e-4 (kucuk dataset overfitting onleme)
 - **Matcher**: HungarianMatcher (bipartite matching) dahil
 - **Recall agirlikli best checkpoint**: `0.6 * recall + 0.4 * mAP50`
-- **Early stopping**: `patience=60`
-- **Toplam epoch**: 80 (onceki 200'den dusuruldu — overfitting onleme)
+- **Early stopping**: `patience=15`
+- **Toplam epoch**: 50
 - **num_queries**: 150 (FP azaltma + Orin hiz optimizasyonu)
 
 ## Evaluation ve Optimal Threshold

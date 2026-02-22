@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Projedeki config dosyalarını RT-DETR klasörüne otomatik kopyalamayı kapatır.",
     )
-    parser.add_argument("--early-stopping-patience", type=int, default=60)
+    parser.add_argument("--early-stopping-patience", type=int, default=15)
     return parser.parse_args()
 
 
